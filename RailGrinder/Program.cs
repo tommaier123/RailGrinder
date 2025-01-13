@@ -1,4 +1,4 @@
-﻿using Newtonsoft.Json.Linq;
+using Newtonsoft.Json.Linq;
 using System;
 using System.IO;
 using System.Net;
@@ -17,7 +17,8 @@ namespace RailGrinder
 
         static string personal_template = """https://synthriderz.com/api/scores?join[]=leaderboard&join[]=leaderboard.beatmap&join[]=profile&join[]=profile.user&sort=rank,ASC&page=§page§&limit=10&s={"$and":[{"beatmap.published":true},{"profile.id":§userid§},{"leaderboard.mode":§mode§},{"leaderboard.difficulty":§difficulty§},{"modifiers":§modifiers§},{"leaderboard.beatmap.ost":true},{"leaderboard.challenge":0}]}""";
 
-        static string leaderboard_template = @"https://synthriderz.com/api/leaderboards/§id§/scores?limit=10&page=§page§&sort=rank,ASC";
+        //static string leaderboard_template = @"https://synthriderz.com/api/leaderboards/§id§/scores?limit=10&page=§page§&sort=rank,ASC";
+        static string leaderboard_template = @"https://synthriderz.com/api/leaderboards/§id§/scores?limit=10&page=§page§&modifiers=§modifiers§&sort=rank,ASC";
 
         static string all_leaderboards_template = """https://synthriderz.com/api/leaderboards?join[]=beatmap&page=§page§&limit=10&s={"$and":[{"beatmap.published":true},{"mode":§mode§},{"difficulty":§difficulty§},{"beatmap.ost":true},{"challenge":0}]}""";
 
@@ -36,10 +37,14 @@ namespace RailGrinder
                 Console.ForegroundColor = ConsoleColor.Magenta;
                 Console.Write("Grinder ");
                 Console.ForegroundColor = ConsoleColor.White;
-                Console.WriteLine("V1.1.6");
+                Console.WriteLine("V1.2.0");
                 Console.ForegroundColor = ConsoleColor.Gray;
-                Console.WriteLine("by Nova_Max");
+                Console.WriteLine("by Nova_Max, modifications by Marinus");
                 Console.WriteLine("");
+                Console.ForegroundColor = ConsoleColor.White;
+                Console.WriteLine("This tool is designed to help quantitatively analyze a player's performance based on leaderboard scores and identify the maps with the highest likelihood for score improvement. This really hammers the Synthriderz servers, so please be kind and don't over-use it.");
+                Console.WriteLine("");
+                Console.ForegroundColor = ConsoleColor.Gray;
             }
             Console.ForegroundColor = ConsoleColor.White;
 
@@ -224,6 +229,7 @@ namespace RailGrinder
                         req = req.Replace("§mode§", mode.ToString());
                         req = req.Replace("§modifiers§", modifiers);
                         req = req.Replace("§name§", HttpUtility.UrlEncode(username));
+                        //#Console.WriteLine("userid_template: " + req);
 
                         string resp = await client.DownloadStringTaskAsync(req);
                         dynamic res_data = JObject.Parse(resp);
@@ -278,6 +284,7 @@ namespace RailGrinder
 
                 Console.WriteLine("User ID: " + userid);
                 Console.WriteLine("");
+                Console.WriteLine("Loading Personal Leaderboards (10 leaderboards per page)");
 
                 if (!average)
                 {
@@ -287,13 +294,15 @@ namespace RailGrinder
                     do
                     {
                         page++;
-                        Console.WriteLine("Personal Leaderboard page: " + page + " of " + pages);
+                        //Console.WriteLine("Personal Leaderboard page: " + page + " of " + pages);
+                        Console.Write("Personal Leaderboard page: " + page + " of ");
                         string req = personal_template;
                         req = req.Replace("§page§", page.ToString());
                         req = req.Replace("§userid§", userid.ToString());
                         req = req.Replace("§difficulty§", difficulty.ToString());
                         req = req.Replace("§mode§", mode.ToString());
                         req = req.Replace("§modifiers§", modifiers);
+                        //#Console.WriteLine("Personal_template:" + req);
 
                         string resp = await client.DownloadStringTaskAsync(req);
                         dynamic res_data = JObject.Parse(resp);
@@ -301,26 +310,36 @@ namespace RailGrinder
                         personal_leaderboard.AddRange(res_data.data);
                         page = res_data.page;
                         pages = res_data.pageCount;
+                        Console.WriteLine(pages);
                     } while (page < pages);
 
-                    personal_leaderboard = personal_leaderboard.GroupBy(x => x.leaderboard.beatmap.id).Select(x => x.OrderBy(y => y.modified_score).First()).ToList();
-
+                    //#Sort the personal leaderboard by rank_combined instead of modified score. This will work universally for all modifiers to provide the best scores first.
+                    personal_leaderboard = personal_leaderboard.GroupBy(x => x.leaderboard.beatmap.id).Select(x => x.OrderBy(y => y.rank_combined).First()).ToList();
 
                     if (played)
                     {
                         int count = 0;
                         List<dynamic> results = new List<dynamic>();
+                        Console.WriteLine("");
+                        Console.WriteLine("Analyzing leaderboards for each map. This list represents each Rank(Modifiers) plus analysis of each page of higher ranked results (10 secores per .).");
+                        Console.WriteLine("(None = 0, Spin90 = 1, Spin180 = 2, Spin360 = 4, Spin360Plus = 8, NoFail = 16, NoObstacles = 32, HaloNotes = 64, NJS2x = 128, NJS3x = 256, SuddenDeath = 512, PrismaticNotes = 1024, VanishNotes = 2048, SmallNotes = 4096, BigNotes = 8192, SpinStyled = 16384, SpinWild = 32768, SpiralMild = 131072, SpiralStyled = 262144, SpiralWild = 524288)");
 
                         foreach (var i in personal_leaderboard)
                         {
                             count++;
-                            Console.Write("Map " + count + " of " + personal_leaderboard.Count);
+                            //Console.Write("Map " + count + " of " + personal_leaderboard.Count);
 
                             int id = i.leaderboard.id;
-                            int rank = Math.Min((int)i.rank, 200);
+                            //Used combined rank for determining if index calculations are necessary.
+                            //#int rank = Math.Min((int)i.rank, 2000);
+                            int rank = Math.Min((int)i.rank_combined, 200);
                             bool stop = false;
                             page = 0;
                             List<dynamic> map_leaderboard = new List<dynamic>();
+                            Console.WriteLine("");
+                            Console.Write("Map " + count + " of " + personal_leaderboard.Count + ": " + rank + "(" + i.modifiers + ")");
+
+                            //If not the top score, how much room for improvement is there?
                             if (rank > 1)
                             {
                                 do
@@ -328,9 +347,18 @@ namespace RailGrinder
                                     page++;
                                     Console.Write(".");
 
+
                                     string req = leaderboard_template;
                                     req = req.Replace("§page§", page.ToString());
                                     req = req.Replace("§id§", id.ToString());
+                                    if (modifiers == "0") 
+                                    { 
+                                        req = req.Replace("§modifiers§", "0"); 
+                                    }
+                                    else
+                                    {
+                                        req = req.Replace("§modifiers§", "-1");
+                                    }
 
                                     string resp = await client.DownloadStringTaskAsync(req);
                                     resp = "{\"data\":" + resp + "}";
@@ -338,7 +366,9 @@ namespace RailGrinder
                                     dynamic res_data = JObject.Parse(resp);
                                     foreach (var j in res_data.data)
                                     {
+                                        //Used combined rank for determining which score to add to the list. This will work universally.
                                         if (j.rank < rank)
+                                        //if (j.rank_combined < rank)
                                         {
                                             map_leaderboard.Add(j);
                                         }
@@ -347,8 +377,9 @@ namespace RailGrinder
                                             stop = true;
                                         }
                                     }
+                                    //To-do: Need to add an exit if page++ exceeds the number of pages, as could happen in some edge cases.
                                 } while (!stop);
-                                Console.WriteLine("");
+                                
                             }
 
                             int average_score = i.modified_score;
@@ -356,18 +387,43 @@ namespace RailGrinder
                             {
                                 average_score = (int)map_leaderboard.Average(x => x.baseScore);
                             }
-
-                            results.Add(new
+                            
+                            //#Use rank for unmodified, or rank_combined if modified
+                            if (modifiers == "0")
                             {
-                                rank = i.rank,
-                                ratio = (float)i.modified_score / average_score,
-                                title = i.leaderboard.beatmap.title + " - " + i.leaderboard.beatmap.artist
-                            });
+                                results.Add(new
+                                {
+                                    rank = i.rank,
+                                    ratio = (float)i.modified_score / average_score,
+                                    title = i.leaderboard.beatmap.title + " - " + i.leaderboard.beatmap.artist
+                                });
+                            }
+                            else
+                            {
+                                results.Add(new
+                                {
+                                    rank = i.rank_combined,
+                                    ratio = (float)i.modified_score / average_score,
+                                    title = i.leaderboard.beatmap.title + " - " + i.leaderboard.beatmap.artist
+                                });
+
+                            }
                         }
 
                         Console.ForegroundColor = ConsoleColor.White;
                         Console.WriteLine("");
+                        Console.WriteLine("");
                         Console.WriteLine("Results (best at the top): ");
+                        results = results.OrderBy(x => x.rank).ToList();
+                        foreach (var res in results)
+                        {
+                            Console.WriteLine("rank: " + res.rank.ToString().PadRight(4, ' ') + " ratio: " + res.ratio.ToString("n3") + " " + res.title);
+                        }
+                        
+                        Console.WriteLine("");
+                        Console.WriteLine("");
+                        Console.WriteLine("Results (most opportunity for improvement at the top): ");
+                        results = results.OrderByDescending(x => x.rank).ToList();
                         results = results.OrderBy(x => x.ratio).ToList();
                         foreach (var res in results)
                         {
@@ -387,7 +443,7 @@ namespace RailGrinder
                             req = req.Replace("§page§", page.ToString());
                             req = req.Replace("§difficulty§", difficulty.ToString());
                             req = req.Replace("§mode§", mode.ToString());
-
+                            
                             string resp = await client.DownloadStringTaskAsync(req);
                             dynamic res_data = JObject.Parse(resp);
 
@@ -396,10 +452,13 @@ namespace RailGrinder
                             pages = res_data.pageCount;
                         } while (page < pages);
 
+                        //Reformat modifiers to query vanilla or combined
+                        if (!(modifiers == "0")) { modifiers = "-1"; };
+
                         int count = 0;
                         List<dynamic> results = new List<dynamic>();
 
-                        all_leaderboards = all_leaderboards.GroupBy(x => x.beatmap.id).Select(x => x.OrderByDescending(y => y.scores).First()).ToList();
+                        all_leaderboards = all_leaderboards.GroupBy(x => x.beatmap.id).Select(x => x.OrderByDescending(y => y.rank_combined).First()).ToList();
                         var unplayed_leaderboards = all_leaderboards.Where(x => !personal_leaderboard.Any(y => y.leaderboard.beatmap.id == x.beatmap.id)).ToList();
 
                         foreach (var leaderboard in unplayed_leaderboards)
@@ -419,6 +478,9 @@ namespace RailGrinder
                                 string req = leaderboard_template;
                                 req = req.Replace("§page§", page.ToString());
                                 req = req.Replace("§id§", leaderboard.id.ToString());
+                                req = req.Replace("§modifiers§", modifiers);
+                                //#req = req.Replace("§difficulty§", difficulty.ToString());
+                                //#req = req.Replace("§mode§", mode.ToString());
 
                                 string resp = await client.DownloadStringTaskAsync(req);
                                 resp = "{\"data\":" + resp + "}";
